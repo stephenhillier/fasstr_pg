@@ -1,11 +1,19 @@
 # FASSTR for PostgreSQL
 
-This is a test of using the FASSTR R library from within PostgreSQL.
+fasstr_pg provides functions for using the FASSTR R library from within PostgreSQL.
 
 FASSTR: https://bcgov.github.io/fasstr/index.html
 
+## HYDAT and other flow data
+
+These PL/R functions were tested using flow data sourced from [Water Survey of Canada HYDAT data](https://www.canada.ca/en/environment-climate-change/services/water-overview/quantity/monitoring/survey/data-products-services/national-archive-hydat.html). However, each function includes a version that accepts arrays of dates and flow values (cubic metres per second).
+If you provide flow data in metric m^3/s, the functions should work with data from other sources.
+
 ## Installation
 
+If you already have a database with HYDAT data, skip to [Set up fasstr_flows table](#set-up-fasstr_flows-table-recommended-when-using-hydat). Otherwise, follow the steps to set up a new database and populate it with HYDAT data.
+
+### Create a new PostgreSQL database
 Start the database by using `docker-compose up`. This will build a container from an image that includes the PL/R extension,
 and will also install the FASSTR package.
 
@@ -20,7 +28,7 @@ pgloader \
     postgres://fasstr:test_pw@localhost:5432/fasstr
 ```
 
-### Set up fasstr_flows table
+### Set up fasstr_flows table (recommended when using HYDAT)
 Hydat includes columns like `flow1, flow2, flow3, .... flow31` indicating the flows on different days.
 Run the script that transforms the Hydat data into a table with a row for each daily value:
 
@@ -58,8 +66,8 @@ To get inputs in the right format, use a query such as:
 ```
 
 #### Example
-```
-fasstr=# select * from fasstr_calc_annual_lowflows('08NM116')
+```sql
+select * from fasstr_calc_annual_lowflows('08NM116')
 ;
  year |     min_1_day     | min_1_day_doy | min_1_day_date |     min_3_day      | ...
 ------+-------------------+---------------+----------------+--------------------+
@@ -94,8 +102,8 @@ To get inputs in the right format, use a query such as:
 
 #### Example
 
-```
-fasstr=# select * from fasstr_calc_longterm_daily_stats('08NM116');
+```sql
+select * from fasstr_calc_longterm_daily_stats('08NM116');
    month   |       mean       |      median       |     maximum      |      minimum      |        p10        |       p90        
 -----------+------------------+-------------------+------------------+-------------------+-------------------+------------------
  Jan       | 1.09058498838921 | 0.906000018119812 |              9.5 | 0.159999996423721 | 0.537999987602234 | 1.68900004625321
@@ -113,3 +121,54 @@ fasstr=# select * from fasstr_calc_longterm_daily_stats('08NM116');
  Long-term | 6.54281997467418 |  1.83000004291534 |             87.5 | 0.025000000372529 | 0.700999975204468 |               21
  ```
  
+### fasstr_compute_frequency_quantile
+
+ FASSTR docs: [compute_frequency_quantile](https://bcgov.github.io/fasstr/reference/compute_frequency_quantile.html)
+
+#### fasstr_compute_frequency_quantile(station_number text, ...)
+```sql
+fasstr_compute_frequency_quantile(
+  stn text,
+  roll_days integer,
+  return_period integer,
+  summer boolean default FALSE,
+  ignore_missing boolean default FALSE
+)
+```
+
+Requires the `fasstr_flows` table.  Accepts a station number, the number of days for a rolling mean (`roll_days`), and a return period (`return_period`); returns the output of `compute_frequency_quantile` for that station.
+
+`roll_days`: Number of days for a rolling mean (required).
+
+`return_period`: Return period in years  (required).
+
+`summer`: boolean flag to indicate whether to calculate for all months or only summer months:  **note**: this is a hack to get around weird behavior going from PostgreSQL arrays to R vectors in PL/R. Summer is Jul-Sept (i.e. `7:9` in the FASSTR R package argument format). Default `FALSE`.
+In the future, I hope to support input of months directly.
+
+
+#### fasstr_compute_frequency_quantile(dates date[], values numeric[], ...)
+```sql
+fasstr_compute_frequency_quantile(
+  dates date[],
+  flows numeric[],
+  roll_days integer,
+  return_period integer,
+  summer boolean default FALSE,
+  ignore_missing boolean default FALSE
+)
+```
+
+Accepts an array of dates and an array of values and calls the `compute_frequency_quantile` function. The other arguments are the same as above.
+
+#### Example
+
+Computing the 7 day 10 year return flow (7Q10):
+
+```sql
+select fasstr_compute_frequency_quantile('08NM116', roll_days => 7, return_period => 10 ) as "7q10";
+       7q10        
+-------------------
+ 0.334462171450288
+(1 row)
+```
+
